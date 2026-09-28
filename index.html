@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Minigame - For His Birthday</title>
+    
+    <!-- Tailwind CSS (CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts: VT323 for Pixel Aesthetic -->
+    <link href="https://fonts.googleapis.com/css2?family=VT323&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'VT323', monospace;
+            background-color: #22223b;
+            margin: 0;
+            overflow: hidden;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+        }
+        canvas {
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+        .pixel-box {
+            background-color: #fff1e6;
+            border: 4px solid #b5838d;
+            box-shadow: 4px 4px 0px 0px rgba(109, 104, 117, 0.5);
+            border-radius: 2px;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        .animate-blink { animation: blink 1s infinite; }
+    </style>
+</head>
+<body>
+
+    <!-- ========================================== -->
+    <!-- DOM UI & GAME CONTAINER                    -->
+    <!-- ========================================== -->
+    <div id="gameWrapper" class="relative w-[800px] h-[500px] shadow-[0_0_20px_rgba(0,0,0,0.5)] bg-[#fcf1f1] border-8 border-[#eaddcf] rounded-lg overflow-hidden">
+        
+        <!-- Main Game Canvas -->
+        <canvas id="gameCanvas" width="784" height="484" class="rounded-sm"></canvas>
+
+        <!-- Floating UI Instructions (Top Left) -->
+        <div id="uiTopLeft" class="absolute top-4 left-4 pixel-box px-3 py-1 z-10 pointer-events-none opacity-90 transition-opacity">
+            <p class="text-[#6d6875] text-xl tracking-wide m-0">
+                🎮 WASD: Gerak | ␣ SPASI: Interaksi
+            </p>
+        </div>
+
+        <!-- Floating Quest Tracker (Bottom Right) -->
+        <div id="uiBottomRight" class="absolute bottom-6 right-6 pixel-box px-4 py-2 z-10 pointer-events-none opacity-95 transition-opacity">
+            <p class="text-[#b56576] font-bold text-xl tracking-wide m-0 border-b-2 border-[#ffb4a2] mb-1 flex items-center">
+                📍 Quest :
+            </p>
+            <p id="questText" class="text-[#6d6875] text-2xl m-0 max-w-[220px] leading-tight whitespace-normal break-words">
+                Ajak ngobrol Ana dulu
+            </p>
+        </div>
+
+        <!-- Floating Interaction Prompt -->
+        <div id="spacePrompt" class="absolute hidden pixel-box px-2 py-1 z-10 pointer-events-none">
+            <p class="text-[#b56576] text-lg font-bold m-0 animate-bounce">💬 SPASI</p>
+        </div>
+
+        <!-- Dynamic JRPG Dialog Box -->
+        <div id="dialogBox" class="absolute left-4 right-4 pixel-box p-3 hidden z-50 h-[140px] cursor-pointer hover:bg-[#ffe3d4] transition-all duration-200">
+            <div class="flex h-full w-full">
+                <!-- Avatar Display Box -->
+                <div class="w-[100px] h-[100px] bg-[#eaddcf] border-4 border-[#b5838d] flex-shrink-0 flex items-center justify-center mr-4 shadow-inner overflow-hidden self-center">
+                    <canvas id="avatarCanvas" width="96" height="96"></canvas>
+                </div>
+                <!-- Dialog Text Content -->
+                <div class="flex-grow flex flex-col relative w-full overflow-hidden">
+                    <div class="inline-block border-b-2 border-[#ffb4a2] pb-1 mb-1 self-start">
+                        <p id="dialogName" class="text-[#b56576] text-2xl font-bold m-0 uppercase tracking-wider">Nama</p>
+                    </div>
+                    <p id="dialogText" class="text-[#4a3b32] text-2xl leading-snug m-0 w-full whitespace-normal break-words pr-8"></p>
+                    <div id="nextIndicator" class="absolute bottom-0 right-2 text-[#b56576] text-2xl hidden animate-blink">▼</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- CORE GAME SCRIPT                           -->
+    <!-- ========================================== -->
+    <script>
+        "use strict";
+
+        // --- 1. DOM REFERENCES ---
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const avatarCanvas = document.getElementById('avatarCanvas');
+        const aCtx = avatarCanvas.getContext('2d');
+        
+        const uiTopLeft = document.getElementById('uiTopLeft');
+        const uiBottomRight = document.getElementById('uiBottomRight');
+        const dialogBox = document.getElementById('dialogBox');
+        const dialogText = document.getElementById('dialogText');
+        const dialogName = document.getElementById('dialogName');
+        const nextIndicator = document.getElementById('nextIndicator');
+        const spacePrompt = document.getElementById('spacePrompt');
+        const questText = document.getElementById('questText');
+
+        // --- 2. WEB AUDIO API SYNTHESIZER ---
+        let audioCtx;
+        
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+        
+        // Browser requires user interaction before audio plays
+        window.addEventListener('keydown', initAudio, {once: true});
+        window.addEventListener('click', initAudio, {once: true});
+
+        const SFX = {
+            typeText: () => {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'square'; 
+                osc.frequency.setValueAtTime(450 + Math.random() * 150, audioCtx.currentTime); 
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+                osc.connect(gain); gain.connect(audioCtx.destination);
+                osc.start(); osc.stop(audioCtx.currentTime + 0.05);
+            },
+            catNugget: () => {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = 'sine'; osc.frequency.setValueAtTime(450, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(250, audioCtx.currentTime + 0.25);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+                osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.25);
+            },
+            catTupai: () => {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = 'sine'; osc.frequency.setValueAtTime(750, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(550, audioCtx.currentTime + 0.2);
+                gain.gain.setValueAtTime(0.05, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+                osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.2);
+            },
+            catPurr: () => {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = 'sine'; osc.frequency.setValueAtTime(80, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.08, audioCtx.currentTime + 0.2);
+                gain.gain.linearRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+                osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.5);
+            },
+            catsDouble: () => { 
+                SFX.catNugget(); 
+                setTimeout(SFX.catTupai, 120); 
+            },
+            blowCandle: () => {
+                if (!audioCtx) return;
+                const bufferSize = audioCtx.sampleRate * 1.0;
+                const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0);
+                for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                
+                const noise = audioCtx.createBufferSource(); 
+                noise.buffer = buffer;
+                
+                const filter = audioCtx.createBiquadFilter();
+                filter.type = 'bandpass'; 
+                filter.frequency.setValueAtTime(1200, audioCtx.currentTime);
+                filter.frequency.exponentialRampToValueAtTime(300, audioCtx.currentTime + 0.6);
+                filter.Q.value = 1.0;
+                
+                const gain = audioCtx.createGain(); 
+                gain.gain.setValueAtTime(0, audioCtx.currentTime);
+                gain.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.15); 
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.8);
+                
+                noise.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
+                noise.start();
+            },
+            cutCake: () => {
+                if (!audioCtx) return;
+                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                osc.type = 'triangle'; osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.08, audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.08);
+                osc.connect(gain); gain.connect(audioCtx.destination); osc.start(); osc.stop(audioCtx.currentTime + 0.08);
+            },
+            openGift: () => {
+                if (!audioCtx) return;
+                const notes = [523.25, 659.25, 783.99, 1046.50]; 
+                let time = audioCtx.currentTime;
+                notes.forEach((freq, index) => {
+                    const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
+                    osc.type = 'square'; osc.frequency.value = freq;
+                    gain.gain.setValueAtTime(0.08, time);
+                    if (index === notes.length - 1) {
+                        gain.gain.linearRampToValueAtTime(0, time + 0.5);
+                        osc.start(time); osc.stop(time + 0.5);
+                    } else {
+                        gain.gain.linearRampToValueAtTime(0, time + 0.12);
+                        osc.start(time); osc.stop(time + 0.12);
+                    }
+                    osc.connect(gain); gain.connect(audioCtx.destination);
+                    time += 0.12;
+                });
+            }
+        };
+
+        // --- 3. GAME STATE & DATA ---
+        let isPaused = false;
+        let isInteracting = false;
+        let currentInteractable = null;
+        
+        let dialogPages = [];
+        let currentDialogIndex = 0;
+        let dialogActions = {};
+        let dialogSounds = {};
+        
+        let isTyping = false;
+        let typeInterval = null;
+        let currentFullText = "";
+        
+        let isGiftOpened = false;
+        let cakeIsBlown = false;
+        let isGiftShaking = false;
+        let interactedWith = { ana: false, cake: false, cats: false, giant_gift: false };
+
+        const quests = [
+            { targetId: 'ana', text: 'Ajak ngobrol Ana dulu' },
+            { targetId: 'cake', text: 'Tiup lilin Kue Bento nya!' },
+            { targetId: 'cats', text: 'Elus Nugget & Tupai 🐾' },
+            { targetId: 'giant_gift', text: 'Buka kado misterius di ujung ruangan!' },
+            { targetId: 'done', text: 'Selesai! Selamat ulang tahun sayang ❤️' }
+        ];
+        let currentQuestIndex = 0;
+
+        const player = { x: 380, y: 250, width: 32, height: 48, speed: 4 };
+        const objects = [
+            { id: 'ana', x: 360, y: 150, width: 40, height: 50, name: 'Ana' },
+            { id: 'cake', x: 180, y: 160, width: 60, height: 50, name: 'Kue Bento' },
+            { id: 'giant_gift', x: 560, y: 130, width: 70, height: 70, name: 'Kado Gede' },
+            { id: 'cats', x: 120, y: 360, width: 80, height: 50, name: 'Nugget & Tupai' }
+        ];
+        const walls = { top: 100, bottom: canvas.height, left: 0, right: canvas.width };
+        
+        let particles = [];
+        let floatingHearts = []; 
+        const colors = ['#ffb4a2', '#e5989b', '#bde0fe', '#a2d2ff', '#ffafcc', '#ffd6a5'];
+
+        // --- 4. INPUT HANDLING ---
+        const keys = { w: false, a: false, s: false, d: false };
+        
+        window.addEventListener('keydown', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || e.key === 'ArrowUp') keys.w = true;
+            if (key === 'a' || e.key === 'ArrowLeft') keys.a = true;
+            if (key === 's' || e.key === 'ArrowDown') keys.s = true;
+            if (key === 'd' || e.key === 'ArrowRight') keys.d = true;
+        });
+        
+        window.addEventListener('keyup', (e) => {
+            const key = e.key.toLowerCase();
+            if (key === 'w' || e.key === 'ArrowUp') keys.w = false;
+            if (key === 'a' || e.key === 'ArrowLeft') keys.a = false;
+            if (key === 's' || e.key === 'ArrowDown') keys.s = false;
+            if (key === 'd' || e.key === 'ArrowRight') keys.d = false;
+            
+            if (e.code === 'Space') {
+                if (!isPaused && currentInteractable) {
+                    startConversation(currentInteractable);
+                } else if (isInteracting) {
+                    handleDialogClick(); 
+                }
+            }
+        });
+
+        // --- 5. LOGIC & PHYSICS FUNCTIONS ---
+        function checkCollision(x, y, w, h) {
+            if (x < walls.left || x + w > walls.right || y < walls.top || y + h > walls.bottom) return true;
+            for (let obj of objects) { 
+                if (x < obj.x + obj.width && x + w > obj.x && y < obj.y + obj.height && y + h > obj.y + 20) return true; 
+            }
+            return false;
+        }
+
+        function checkProximity(player, obj, padding = 45) {
+            return player.x < obj.x + obj.width + padding && 
+                   player.x + player.width > obj.x - padding &&
+                   player.y < obj.y + obj.height + padding && 
+                   player.y + player.height > obj.y - padding;
+        }
+
+        function getRandom(arr) { 
+            return arr[Math.floor(Math.random() * arr.length)]; 
+        }
+
+        function spawnConfetti(x, y) {
+            for (let i = 0; i < 60; i++) {
+                particles.push({ 
+                    x: x, 
+                    y: y, 
+                    vx: (Math.random()-0.5)*12, 
+                    vy: (Math.random()-1)*12-2, 
+                    color: colors[Math.floor(Math.random()*colors.length)], 
+                    life: 1.0, 
+                    size: Math.random()*5+4 
+                });
+            }
+        }
+
+        function spawnHearts(x, y) {
+            for (let i = 0; i < 6; i++) {
+                floatingHearts.push({ 
+                    x: x+(Math.random()*30-15), 
+                    y: y-10, 
+                    vy: -1-Math.random()*2, 
+                    life: 1.0 
+                });
+            }
+        }
+
+        function updateQuestUI() { 
+            questText.textContent = quests[currentQuestIndex].text; 
+        }
+
+        function advanceQuest(id) {
+            if (currentQuestIndex < quests.length && id === quests[currentQuestIndex].targetId) {
+                currentQuestIndex++; 
+                updateQuestUI();
+            }
+        }
+
+        // --- 6. DIALOG SYSTEM ---
+        dialogBox.addEventListener('click', handleDialogClick);
+
+        function handleDialogClick() {
+            initAudio(); 
+            if (isTyping) {
+                clearInterval(typeInterval); 
+                dialogText.innerHTML = currentFullText; 
+                isTyping = false; 
+                nextIndicator.classList.remove('hidden');
+            } else {
+                if (dialogActions[currentDialogIndex]) dialogActions[currentDialogIndex]();
+                currentDialogIndex++;
+                if (currentDialogIndex < dialogPages.length) {
+                    typeText(dialogPages[currentDialogIndex]);
+                } else {
+                    closeDialog();
+                }
+            }
+        }
+
+        function typeText(text) {
+            isTyping = true; 
+            currentFullText = text; 
+            dialogText.innerHTML = ''; 
+            nextIndicator.classList.add('hidden');
+            
+            if (dialogSounds[currentDialogIndex]) dialogSounds[currentDialogIndex]();
+
+            let i = 0; 
+            clearInterval(typeInterval);
+            
+            typeInterval = setInterval(() => {
+                const char = text.charAt(i);
+                dialogText.innerHTML += char;
+                
+                if (char !== ' ' && i % 2 === 0) SFX.typeText();
+                
+                i++;
+                if (i >= text.length) {
+                    clearInterval(typeInterval); 
+                    isTyping = false; 
+                    nextIndicator.classList.remove('hidden');
+                }
+            }, 30);
+        }
+
+        function closeDialog() {
+            dialogBox.classList.add('hidden');
+            uiTopLeft.classList.remove('hidden'); 
+            uiBottomRight.classList.remove('hidden');
+            setTimeout(() => { isPaused = false; isInteracting = false; }, 100);
+        }
+
+        function startConversation(obj) {
+            initAudio(); 
+            isPaused = true; 
+            isInteracting = true; 
+            spacePrompt.classList.add('hidden');
+            uiTopLeft.classList.add('hidden'); 
+            uiBottomRight.classList.add('hidden');
+            
+            // Dynamic Dialog Positioning
+            if (obj.y >= 200) { 
+                dialogBox.classList.remove('bottom-4'); 
+                dialogBox.classList.add('top-4'); 
+            } else { 
+                dialogBox.classList.remove('top-4'); 
+                dialogBox.classList.add('bottom-4'); 
+            }
+
+            dialogName.innerText = obj.name; 
+            renderAvatar(obj.id); 
+            dialogBox.classList.remove('hidden');
+            
+            // Reset state
+            dialogPages = []; 
+            dialogActions = {}; 
+            dialogSounds = {}; 
+            currentDialogIndex = 0;
+
+            // --- QUEST / DIALOG TREES ---
+            if (obj.id === 'ana') {
+                if (!interactedWith.ana) {
+                    dialogPages = [
+                        "Hello my love!",
+                        "Suka nggak sama dunia kecil yang aku buat untuk hadiah ulang tahunmu ini?",
+                        "Hehehe, Aku harap kamu suka yaa.",
+                        "Coba deh keliling ruangan ini dan cek barang-barangnya juga!"
+                    ];
+                    dialogActions[3] = () => { 
+                        spawnHearts(obj.x + 20, obj.y); 
+                        advanceQuest('ana'); 
+                        interactedWith.ana = true; 
+                    };
+                } else {
+                    const rnd = Math.floor(Math.random() * 3);
+                    if (rnd === 0) {
+                        dialogPages = ["Semoga hari-harimu selalu bahagia yaa, sayang!"];
+                    } else if (rnd === 1) {
+                        dialogPages = ["Jangan lupa keliling, siapa tau ada kejutan lain lho"];
+                    } else {
+                        dialogPages = ["I love you, Rama! Kapan-kapan kita main game bareng lagi ya ^__^"];
+                    }
+                    dialogActions[0] = () => { spawnHearts(obj.x + 20, obj.y); };
+                }
+            } 
+            else if (obj.id === 'cake') {
+                if (!cakeIsBlown) {
+                    dialogPages = [
+                        "Happy Birthday, Rama",
+                        "Make a wish dulu yaa di dalam hati...",
+                        "Kalau sudah, ayo kita tiup lilinnya bareng-bareng!",
+                        "*Fyuuuh... Rama meniup lilin kue bento*",
+                        "Yeyy! Selamat ulang tahun sayang 🎉",
+                        "Semoga doa kamu terkabul dan kita langgeng terus yaa <3"
+                    ];
+                    dialogSounds[3] = SFX.blowCandle; 
+                    dialogActions[3] = () => { cakeIsBlown = true; };
+                    dialogActions[4] = () => { 
+                        spawnConfetti(obj.x + 30, obj.y); 
+                        advanceQuest('cake'); 
+                        interactedWith.cake = true; 
+                    };
+                } else {
+                    dialogPages = [getRandom([
+                        "Lilinnya udah mati! Jangan diliatin terus kuenya, nanti ngiler aowkwk",
+                        "*Nomnom... Rama memotong sepotong kecil kue bento virtual*",
+                        "Semoga di umur baru ini kamu makin sukses yaa"
+                    ])];
+                    if (dialogPages[0].includes("memotong")) {
+                        dialogSounds[0] = SFX.cutCake;
+                    }
+                }
+            } 
+            else if (obj.id === 'cats') {
+                if (!interactedWith.cats) {
+                    dialogPages = [
+                        "Meow! 🐾",
+                        "(Nugget & Tupai ngeliatin Rama, kayaknya minta dielus tuh!)",
+                        "*Rama mengelus kepala Nugget & Tupai dengan lembut*",
+                        "*Purrrrrr...*",
+                        "Mereka nitip pesen, katanya HBD buat Rama! 🐈"
+                    ];
+                    dialogSounds[0] = SFX.catsDouble;
+                    dialogSounds[3] = SFX.catPurr;
+                    dialogActions[2] = () => { 
+                        spawnHearts(obj.x + 40, obj.y); 
+                        advanceQuest('cats'); 
+                        interactedWith.cats = true; 
+                    };
+                } else {
+                    const rnd = Math.floor(Math.random() * 3);
+                    if (rnd === 0) {
+                        dialogPages = ["*Nugget sedang asyik menjilati cakarnya* 🐾"]; 
+                        dialogSounds[0] = SFX.catNugget;
+                    } else if (rnd === 1) {
+                        dialogPages = ["*Tupai menggulung seperti bola salju kecil* 🐈"]; 
+                        dialogSounds[0] = SFX.catTupai;
+                    } else {
+                        dialogPages = ["*Purrrr...* (Kayaknya mereka suka dielus sama Rama)"]; 
+                        dialogSounds[0] = SFX.catPurr;
+                    }
+                    dialogActions[0] = () => { spawnHearts(obj.x + 40, obj.y); };
+                }
+            } 
+            else if (obj.id === 'giant_gift') {
+                if (!isGiftOpened) {
+                    dialogPages = [
+                        "SURPRISE!! 🎉",
+                        "Ayo buka kado spesial ini!",
+                        "*Kado bergetar hebat dan mulai terbuka...*",
+                        "JENG JENG JENG! 📜💍",
+                        "Hadiah asli masih di otw sih, tapi Ana sudah siapin versi digitalnya buat kamu di sini!",
+                        "Makasih ya udah selalu sabar dan nemenin Ana terus. I love you to the moon and back! ❤️"
+                    ];
+                    dialogActions[1] = () => { isGiftShaking = true; };
+                    dialogActions[2] = () => { 
+                        isGiftShaking = false; 
+                        isGiftOpened = true; 
+                        spawnConfetti(obj.x + 35, obj.y + 20); 
+                    };
+                    dialogSounds[3] = SFX.openGift; 
+                    dialogActions[5] = () => { 
+                        advanceQuest('giant_gift'); 
+                        interactedWith.giant_gift = true; 
+                    };
+                } else {
+                    dialogPages = [getRandom([
+                        "Jangan lupa nanti unboxing hadiah yang asli!",
+                        "Hehehe, love u so much and thank you for being my best friend and my love",
+                        "Ciee udah 18 aja, makin ganteng dan sukses yaa di umur baru ini! Semoga kita langgeng terus <3",
+                        "Love u so much! Bales pake dimsum dong hehehe :p"
+                    ])];
+                }
+            }
+
+            typeText(dialogPages[0]);
+        }
+
+        // --- 7. RENDERING FUNCTIONS ---
+        function renderAvatar(id) {
+            aCtx.clearRect(0, 0, 96, 96); 
+            aCtx.imageSmoothingEnabled = false; 
+            aCtx.save(); 
+            aCtx.scale(3, 3); 
+            
+            const time = Date.now();
+            const isBlinking = Math.floor(time / 2000) % 3 === 0 && Math.floor(time / 100) % 2 === 0;
+
+            if (id === 'ana') {
+                aCtx.fillStyle = '#1a1a1a'; aCtx.fillRect(4, 4, 24, 28); // Bergo Hitam
+                aCtx.fillStyle = '#2b2b2b'; aCtx.fillRect(6, 4, 20, 4); 
+                aCtx.fillStyle = '#ffcdb2'; aCtx.fillRect(8, 10, 16, 14); // Wajah
+                aCtx.strokeStyle = '#4a4e69'; aCtx.lineWidth = 1;
+                aCtx.strokeRect(9, 14, 6, 4); aCtx.strokeRect(17, 14, 6, 4); 
+                
+                if (isBlinking) {
+                    aCtx.fillStyle = '#22223b'; aCtx.fillRect(11, 16, 2, 1); aCtx.fillRect(19, 16, 2, 1);
+                } else {
+                    aCtx.fillStyle = '#22223b'; aCtx.fillRect(11, 15, 2, 2); aCtx.fillRect(19, 15, 2, 2);
+                }
+                aCtx.fillStyle = 'rgba(255, 180, 162, 0.7)'; aCtx.fillRect(9, 17, 3, 2); aCtx.fillRect(20, 17, 3, 2);
+                aCtx.fillStyle = '#d62828'; aCtx.fillRect(14, 19, 4, 3); 
+            } 
+            else if (id === 'cake') {
+                aCtx.fillStyle = '#eaddcf'; aCtx.fillRect(4, 22, 24, 6); 
+                aCtx.fillStyle = '#ffb4a2'; aCtx.fillRect(6, 14, 20, 8); 
+                aCtx.fillStyle = '#ffffff'; aCtx.fillRect(6, 10, 20, 4); 
+                aCtx.fillStyle = '#d62828'; aCtx.fillRect(14, 6, 4, 4); 
+                aCtx.fillStyle = '#a8dadc'; aCtx.fillRect(10, 2, 2, 8); 
+                if (!cakeIsBlown) { 
+                    aCtx.fillStyle = '#ffb703'; aCtx.fillRect(10, 0, 2, 2); 
+                } 
+            }
+            else if (id === 'cats') {
+                aCtx.fillStyle = '#f4a261'; aCtx.fillRect(4, 16, 12, 12); 
+                aCtx.fillRect(4, 12, 4, 4); aCtx.fillRect(12, 12, 4, 4); 
+                aCtx.fillStyle = '#264653'; aCtx.fillRect(6, 18, 2, 2); aCtx.fillRect(12, 18, 2, 2);
+                aCtx.fillStyle = '#ffffff'; aCtx.fillRect(16, 20, 10, 8);
+                aCtx.fillRect(16, 16, 3, 4); aCtx.fillRect(23, 16, 3, 4); 
+                aCtx.fillStyle = '#6d6875'; aCtx.fillRect(23, 16, 3, 3); 
+                aCtx.fillStyle = '#264653'; aCtx.fillRect(18, 22, 2, 2); aCtx.fillRect(22, 22, 2, 2);
+            }
+            else if (id === 'giant_gift') {
+                aCtx.fillStyle = '#bde0fe'; aCtx.fillRect(4, 12, 24, 20); 
+                aCtx.fillStyle = '#a2d2ff'; aCtx.fillRect(2, 8, 28, 6); 
+                aCtx.fillStyle = '#ffafcc'; aCtx.fillRect(14, 8, 4, 24); aCtx.fillRect(4, 20, 24, 4); 
+            }
+            
+            aCtx.restore();
+            
+            // Re-render to process blinking frames during interaction
+            if(isInteracting) {
+                requestAnimationFrame(() => renderAvatar(id));
+            }
+        }
+
+        function drawEnvironment() {
+            ctx.fillStyle = '#fde2e4'; ctx.fillRect(0, 0, canvas.width, walls.top);
+            ctx.fillStyle = '#fad2e1'; ctx.fillRect(0, walls.top - 10, canvas.width, 10);
+            
+            const tileSize = 40;
+            for (let row = 0; row < (canvas.height - walls.top) / tileSize; row++) {
+                for (let col = 0; col < canvas.width / tileSize; col++) {
+                    ctx.fillStyle = (row + col) % 2 === 0 ? '#fff1e6' : '#e2ece9';
+                    ctx.fillRect(col * tileSize, walls.top + row * tileSize, tileSize, tileSize);
+                }
+            }
+            ctx.fillStyle = 'rgba(0,0,0,0.03)'; ctx.fillRect(0, walls.top, canvas.width, 20);
+        }
+
+        function drawObjects(time) {
+            const frameIndex = Math.floor(time / 400) % 2; 
+
+            objects.forEach(obj => {
+                // Drop shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.15)'; 
+                ctx.beginPath(); ctx.ellipse(obj.x + obj.width/2, obj.y + obj.height, obj.width/2, 10, 0, 0, Math.PI*2); ctx.fill();
+
+                // Quest Marker (!)
+                if (currentQuestIndex < quests.length && quests[currentQuestIndex].targetId === obj.id) {
+                    ctx.fillStyle = '#ffb703'; ctx.font = '30px VT323';
+                    const bounce = frameIndex === 0 ? 0 : -4;
+                    ctx.fillText('!', obj.x + obj.width/2 - 6, obj.y - 15 + bounce);
+                }
+
+                if (obj.id === 'ana') {
+                    const ax = obj.x, ay = obj.y;
+                    ctx.fillStyle = '#bde0fe'; ctx.fillRect(ax + 8, ay + 30, 24, 20); 
+                    ctx.fillStyle = '#a2d2ff'; ctx.fillRect(ax + 4, ay + 32, 6, 12); ctx.fillRect(ax + 30, ay + 32, 6, 12); 
+                    
+                    ctx.fillStyle = '#1a1a1a'; ctx.fillRect(ax + 4, ay + 4, 32, 22);
+                    ctx.beginPath(); ctx.moveTo(ax + 4, ay + 26); ctx.lineTo(ax + 36, ay + 26); ctx.lineTo(ax + 28, ay + 36); ctx.lineTo(ax + 12, ay + 36); ctx.fill();
+                    ctx.fillStyle = '#2b2b2b'; ctx.fillRect(ax + 8, ay, 24, 4);
+                    
+                    ctx.fillStyle = '#ffcdb2'; ctx.fillRect(ax + 10, ay + 8, 20, 14); 
+
+                    ctx.strokeStyle = '#4a4e69'; ctx.lineWidth = 1.5;
+                    ctx.strokeRect(ax + 11, ay + 12, 7, 5); ctx.strokeRect(ax + 22, ay + 12, 7, 5);
+                    ctx.beginPath(); ctx.moveTo(ax + 18, ay + 14); ctx.lineTo(ax + 22, ay + 14); ctx.stroke();
+                    
+                    const isBlinkingMap = Math.floor(time / 2000) % 3 === 0 && frameIndex === 0;
+                    
+                    if (isInteracting && currentInteractable?.id === 'ana') {
+                        ctx.strokeStyle = '#22223b'; ctx.lineWidth = 1.5;
+                        ctx.beginPath(); ctx.moveTo(ax+12, ay+15); ctx.lineTo(ax+14, ay+13); ctx.lineTo(ax+16, ay+15); ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(ax+23, ay+15); ctx.lineTo(ax+25, ay+13); ctx.lineTo(ax+27, ay+15); ctx.stroke();
+                        ctx.fillStyle = '#d62828'; ctx.fillRect(ax+18, ay+18, 4, 2);
+                    } else if (isBlinkingMap) {
+                        ctx.fillStyle = '#22223b'; ctx.fillRect(ax + 14, ay + 16, 2, 1); ctx.fillRect(ax + 25, ay + 16, 2, 1);
+                    } else {
+                        ctx.fillStyle = '#22223b'; ctx.fillRect(ax + 14, ay + 14, 2, 2); ctx.fillRect(ax + 25, ay + 14, 2, 2);
+                    }
+                    ctx.fillStyle = 'rgba(255, 180, 162, 0.6)'; ctx.fillRect(ax + 11, ay + 17, 3, 2); ctx.fillRect(ax + 26, ay + 17, 3, 2); 
+                }
+
+                if (obj.id === 'cake') {
+                    const cx = obj.x, cy = obj.y;
+                    ctx.fillStyle = '#eaddcf'; ctx.fillRect(cx, cy + 25, 60, 20); 
+                    ctx.fillStyle = '#d4c5b9'; ctx.fillRect(cx - 5, cy + 25, 70, 5); 
+                    ctx.fillStyle = '#ffb4a2'; ctx.beginPath(); ctx.ellipse(cx + 30, cy + 20, 20, 10, 0, 0, Math.PI*2); ctx.fill(); ctx.fillRect(cx + 10, cy + 15, 40, 10);
+                    ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.ellipse(cx + 30, cy + 15, 20, 8, 0, 0, Math.PI*2); ctx.fill(); 
+                    ctx.fillStyle = '#d62828'; ctx.beginPath(); ctx.arc(cx + 30, cy + 12, 4, 0, Math.PI*2); ctx.fill(); 
+                    ctx.fillStyle = '#a8dadc'; ctx.fillRect(cx + 18, cy + 2, 4, 12);
+                    
+                    if (!cakeIsBlown) { 
+                        ctx.fillStyle = frameIndex === 0 ? '#ffb703' : '#ff9e00'; 
+                        ctx.fillRect(cx + 18, cy - 2, 4, 4); 
+                    }
+                }
+
+                if (obj.id === 'giant_gift') {
+                    let gx = obj.x, gy = obj.y;
+                    if (isGiftShaking) gx += (frameIndex === 0) ? -2 : 2;
+
+                    if (!isGiftOpened) {
+                        ctx.fillStyle = '#bde0fe'; ctx.fillRect(gx, gy + 15, 70, 55); 
+                        ctx.fillStyle = '#a2d2ff'; ctx.fillRect(gx - 5, gy + 5, 80, 15); 
+                        ctx.fillStyle = '#ffafcc'; ctx.fillRect(gx + 30, gy + 5, 12, 65); ctx.fillRect(gx, gy + 35, 70, 12); 
+                        ctx.beginPath(); ctx.ellipse(gx + 22, gy + 5, 14, 7, Math.PI/6, 0, Math.PI*2); ctx.fill();
+                        ctx.beginPath(); ctx.ellipse(gx + 48, gy + 5, 14, 7, -Math.PI/6, 0, Math.PI*2); ctx.fill();
+                    } else {
+                        ctx.fillStyle = '#bde0fe'; ctx.fillRect(gx, gy + 15, 70, 55);
+                        ctx.fillStyle = '#ffafcc'; ctx.fillRect(gx + 30, gy + 15, 12, 55);
+                        ctx.fillStyle = '#a2d2ff'; ctx.fillRect(gx + 45, gy + 50, 40, 15); 
+                        const floatY = (frameIndex === 0) ? -2 : 0; 
+                        
+                        // Shopee Box
+                        ctx.fillStyle = '#f77f00'; ctx.fillRect(gx + 8, gy - 10 + floatY, 30, 25); 
+                        ctx.fillStyle = '#d62828'; ctx.fillRect(gx + 8, gy + floatY, 30, 5); 
+                        ctx.fillStyle = '#ffffff'; ctx.fillRect(gx + 18, gy - 5 + floatY, 10, 15); 
+                        ctx.fillStyle = '#000000'; ctx.fillRect(gx + 19, gy - 3 + floatY, 8, 2); ctx.fillRect(gx + 19, gy + 1 + floatY, 8, 2); 
+                        
+                        // Scroll & Ring
+                        ctx.fillStyle = '#fff3b0'; ctx.fillRect(gx + 42, gy - 15 + floatY, 20, 15); 
+                        ctx.fillStyle = '#e09f3e'; ctx.fillRect(gx + 44, gy - 13 + floatY, 16, 11); 
+                        ctx.fillStyle = '#9e2a2b'; ctx.fillRect(gx + 55, gy - 8 + floatY, 3, 3);
+                        ctx.fillStyle = '#ffd166'; ctx.fillRect(gx + 40, gy - 5 + floatY, 8, 8); 
+                        ctx.fillStyle = '#4cc9f0'; ctx.fillRect(gx + 42, gy - 7 + floatY, 4, 4); 
+                    }
+                }
+
+                if (obj.id === 'cats') {
+                    const tailMove = frameIndex === 0 ? 0 : 2;
+                    ctx.fillStyle = '#f4a261'; ctx.fillRect(obj.x, obj.y + 20, 28, 20); ctx.fillRect(obj.x + 4, obj.y + 10, 8, 10); ctx.fillRect(obj.x + 16, obj.y + 10, 8, 10);
+                    ctx.fillRect(obj.x - 4 + tailMove, obj.y + 30, 4, 8);
+                    
+                    if (isInteracting && currentInteractable?.id === 'cats') {
+                        ctx.strokeStyle = '#264653'; ctx.lineWidth = 1;
+                        ctx.beginPath(); ctx.moveTo(obj.x+7, obj.y+26); ctx.lineTo(obj.x+9, obj.y+24); ctx.lineTo(obj.x+11, obj.y+26); ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(obj.x+19, obj.y+26); ctx.lineTo(obj.x+21, obj.y+24); ctx.lineTo(obj.x+23, obj.y+26); ctx.stroke();
+                    } else {
+                        ctx.fillStyle = '#264653'; ctx.fillRect(obj.x + 8, obj.y + 25, 4, 4); ctx.fillRect(obj.x + 20, obj.y + 25, 4, 4);
+                    }
+
+                    const tx = obj.x + 45, ty = obj.y + 28;
+                    ctx.fillStyle = '#ffffff'; ctx.fillRect(tx, ty, 20, 12); ctx.fillRect(tx + 2, ty - 8, 6, 8); ctx.fillRect(tx + 12, ty - 8, 6, 8); 
+                    ctx.fillStyle = '#6d6875'; ctx.fillRect(tx + 12, ty - 6, 4, 6); 
+                    ctx.fillStyle = '#ffffff'; ctx.fillRect(tx + 20, ty + 4 - tailMove, 6, 4);
+                    ctx.fillStyle = '#6d6875'; ctx.fillRect(tx + 26, ty + 4 - tailMove, 4, 4);
+                    
+                    if (isInteracting && currentInteractable?.id === 'cats') {
+                        ctx.strokeStyle = '#264653'; ctx.lineWidth = 1;
+                        ctx.beginPath(); ctx.moveTo(tx+3, ty+5); ctx.lineTo(tx+5, ty+3); ctx.lineTo(tx+7, ty+5); ctx.stroke();
+                        ctx.beginPath(); ctx.moveTo(tx+11, ty+5); ctx.lineTo(tx+13, ty+3); ctx.lineTo(tx+15, ty+5); ctx.stroke();
+                    } else {
+                        ctx.fillStyle = '#264653'; ctx.fillRect(tx + 4, ty + 4, 3, 3); ctx.fillRect(tx + 12, ty + 4, 3, 3);
+                    }
+                }
+            });
+        }
+
+        function drawPlayer(time, isMoving) {
+            const walkFrame = Math.floor(time / 200) % 2;
+            
+            // Drop shadow
+            ctx.fillStyle = 'rgba(0,0,0,0.2)'; 
+            ctx.beginPath(); 
+            ctx.ellipse(player.x + player.width/2, player.y + player.height, player.width/2, 8, 0, 0, Math.PI*2); 
+            ctx.fill();
+
+            const px = player.x, py = player.y;
+            
+            // Hair & Head
+            ctx.fillStyle = '#ffcdb2'; ctx.fillRect(px + 4, py, 24, 20); 
+            ctx.fillStyle = '#4a3b32'; ctx.fillRect(px + 2, py - 4, 28, 10); ctx.fillRect(px + 2, py, 6, 6); ctx.fillRect(px + 24, py, 6, 6); 
+            
+            // Face
+            if (isInteracting) {
+                ctx.strokeStyle = '#2b2d42'; ctx.lineWidth = 2;
+                ctx.beginPath(); ctx.moveTo(px+7, py+11); ctx.lineTo(px+9, py+9); ctx.lineTo(px+11, py+11); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(px+19, py+11); ctx.lineTo(px+21, py+9); ctx.lineTo(px+23, py+11); ctx.stroke();
+                ctx.fillStyle = '#d62828'; ctx.fillRect(px + 14, py + 14, 4, 2);
+            } else {
+                ctx.fillStyle = '#2b2d42'; ctx.fillRect(px + 8, py + 8, 4, 4); ctx.fillRect(px + 20, py + 8, 4, 4); 
+            }
+
+            // Body & Legs
+            ctx.fillStyle = '#e29578'; ctx.fillRect(px + 6, py + 20, 20, 18); 
+            ctx.fillStyle = '#264653'; 
+            
+            if (isMoving) {
+                if (walkFrame === 0) { 
+                    ctx.fillRect(px + 6, py + 38, 8, 8); 
+                    ctx.fillRect(px + 18, py + 38, 8, 10); 
+                } else { 
+                    ctx.fillRect(px + 6, py + 38, 8, 10); 
+                    ctx.fillRect(px + 18, py + 38, 8, 8); 
+                }
+            } else {
+                ctx.fillRect(px + 6, py + 38, 8, 10); 
+                ctx.fillRect(px + 18, py + 38, 8, 10); 
+            }
+        }
+
+        function updateAndDrawParticles() {
+            // Update Confetti
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i]; 
+                p.x += p.vx; 
+                p.y += p.vy; 
+                p.vy += 0.3; // Gravity
+                p.life -= 0.015;
+                
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                } else { 
+                    ctx.fillStyle = p.color; 
+                    ctx.globalAlpha = p.life; 
+                    ctx.fillRect(p.x, p.y, p.size, p.size); 
+                    ctx.globalAlpha = 1.0; 
+                }
+            }
+            
+            // Update Hearts
+            for (let i = floatingHearts.length - 1; i >= 0; i--) {
+                let h = floatingHearts[i]; 
+                h.y += h.vy; 
+                h.life -= 0.015;
+                
+                if (h.life <= 0) {
+                    floatingHearts.splice(i, 1);
+                } else { 
+                    ctx.globalAlpha = h.life; 
+                    ctx.fillStyle = '#ff5c8a'; 
+                    ctx.font = '24px sans-serif'; 
+                    ctx.fillText('❤️', h.x, h.y); 
+                    ctx.globalAlpha = 1.0; 
+                }
+            }
+        }
+
+        // --- 8. MAIN GAME LOOP ---
+        function gameLoop() {
+            const time = Date.now();
+            let isMoving = false;
+
+            if (!isPaused) {
+                let nextX = player.x; 
+                let nextY = player.y;
+                
+                if (keys.w) { nextY -= player.speed; isMoving = true; }
+                if (keys.s) { nextY += player.speed; isMoving = true; }
+                if (keys.a) { nextX -= player.speed; isMoving = true; }
+                if (keys.d) { nextX += player.speed; isMoving = true; }
+
+                if (nextX !== player.x && !checkCollision(nextX, player.y, player.width, player.height)) {
+                    player.x = nextX;
+                }
+                if (nextY !== player.y && !checkCollision(player.x, nextY, player.width, player.height)) {
+                    player.y = nextY;
+                }
+
+                currentInteractable = null;
+                let isNearObject = false;
+
+                for (let obj of objects) {
+                    if (checkProximity(player, obj)) {
+                        currentInteractable = obj;
+                        isNearObject = true; 
+                        break;
+                    }
+                }
+
+                if (isNearObject) {
+                    spacePrompt.classList.remove('hidden');
+                    spacePrompt.style.left = `${currentInteractable.x + currentInteractable.width/2 - 35}px`;
+                    spacePrompt.style.top = `${currentInteractable.y - 45}px`;
+                } else {
+                    spacePrompt.classList.add('hidden');
+                }
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawEnvironment();
+            
+            // Note: Depth sorting can be implemented here if entities overlap, 
+            // but currently they are static and separated.
+            drawObjects(time); 
+            drawPlayer(time, isMoving);
+            updateAndDrawParticles();
+
+            requestAnimationFrame(gameLoop);
+        }
+
+        // Initialize Game
+        updateQuestUI();
+        requestAnimationFrame(gameLoop);
+
+    </script>
+</body>
+</html>
