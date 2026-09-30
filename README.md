@@ -13,7 +13,7 @@ An interactive, 16-bit RPG-inspired web minigame designed as a personalized digi
 
 Since this project relies on vanilla HTML/JS with CDN-linked CSS, running it is incredibly simple:
 
-1. Clone this repository by running: `git clone https://github.com/yourusername/cozy-birthday-quest.git`
+1. Clone this repository by running: `git clone https://github.com/destiaanana/mini-pixel-game.git`
 2. Navigate to the project directory.
 3. Open `index.html` directly in any modern web browser (Chrome, Firefox, Safari, Edge). 
 
